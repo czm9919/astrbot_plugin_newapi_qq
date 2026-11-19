@@ -1,0 +1,8 @@
+name: astrbot_plugin_newapi_qq
+display_name: New API QQ 绑定
+desc: 把 QQ 号绑定到 New API 面板账号，解锁幸运大转盘与免费模型
+version: 1.0.0
+author: new-api-operator
+repo: https://github.com/czm9919/astrbot_plugin_newapi_qq
+short_desc: QQ 号绑定 New API 账号
+astrbot_version: ">=4.0.0"

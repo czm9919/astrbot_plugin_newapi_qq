@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.idea/
+.DS_Store
+# 本地真实配置（含服务令牌）绝不入库
+data/
+*_config.json
+!config.example.json

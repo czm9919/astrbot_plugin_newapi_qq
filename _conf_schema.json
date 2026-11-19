@@ -1,0 +1,24 @@
+{
+  "api_base": {
+    "type": "string",
+    "description": "New API 站点地址（不要带 /api 后缀）",
+    "default": "http://127.0.0.1:3000",
+    "hint": "例如 https://api.example.com"
+  },
+  "agent_token": {
+    "type": "string",
+    "description": "机器人服务令牌（与站点 option qq_agent_token 一致）",
+    "default": "",
+    "hint": "在面板「幸运大转盘 → 抽奖设置」里生成并填写"
+  },
+  "bind_command": {
+    "type": "string",
+    "description": "绑定命令名（不带斜杠）",
+    "default": "绑定"
+  },
+  "timeout_seconds": {
+    "type": "int",
+    "description": "请求站点超时秒数",
+    "default": 10
+  }
+}
