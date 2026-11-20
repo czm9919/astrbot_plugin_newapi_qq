@@ -26,11 +26,16 @@
 
 ## 安装
 
-1. 下载本仓库，把整个目录放进 AstrBot 的 `data/plugins/`：
+1. 拿包，两种方式都行：
 
-   ```
-   data/plugins/astrbot_plugin_newapi_qq/
-   ```
+   - **直装包（推荐）**：从 [Releases](../../releases/latest) 下 `astrbot_plugin_newapi_qq-v1.0.1.zip`，
+     拖进 AstrBot WebUI 的插件页安装；
+   - **源码**：`git clone https://github.com/czm9919/astrbot_plugin_newapi_qq.git`，把整个目录放进
+     AstrBot 的 `data/plugins/`：
+
+     ```
+     data/plugins/astrbot_plugin_newapi_qq/
+     ```
 
 2. 重启 AstrBot（或在 WebUI 插件页点重载）。
 3. 在 AstrBot WebUI → 插件 → 本插件 → 配置：
