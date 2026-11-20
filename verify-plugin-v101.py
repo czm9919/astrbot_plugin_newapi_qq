@@ -15,9 +15,17 @@ import time
 import types
 from pathlib import Path
 
-PLUGIN_MAIN = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(
-    "integrations/astrbot_plugin_newapi_qq/main.py"
+_CANDIDATES = [
+    Path(__file__).resolve().parent / "main.py",
+    Path("integrations/astrbot_plugin_newapi_qq/main.py"),
+]
+PLUGIN_MAIN = (
+    Path(sys.argv[1])
+    if len(sys.argv) > 1
+    else next((p for p in _CANDIDATES if p.exists()), _CANDIDATES[0])
 )
+if not PLUGIN_MAIN.exists():
+    sys.exit(f"main.py not found: {PLUGIN_MAIN}")
 
 # ----------------------------------------------------------------- stubs
 api = types.ModuleType("astrbot.api")

@@ -62,6 +62,31 @@
 }
 ```
 
+## 从插件市场安装
+
+官方插件市场是**提交制**：索引由 `cloud.astrbot.app` 的发布流水线生成，不是爬 GitHub，
+所以新仓库不会自动出现在市场里。当前提供两种方式 —— 自定义源立刻可用，官方发布需要
+一个 AstrBot Cloud 账号在网页上点一次。
+
+**A. 自定义源（不需要账号）**
+
+AstrBot WebUI → 插件 → 插件市场 → 右上「源管理」→ 添加源：
+
+```
+名称：New API 官方插件
+URL ：https://raw.githubusercontent.com/czm9919/astrbot_plugin_newapi_qq/main/market/plugins.json
+```
+
+保存后刷新市场，搜 `newapi` 即可看到 **New API QQ 绑定**。
+
+**B. 官方市场**
+
+<https://cloud.astrbot.app/publish> 提交本仓库地址，CI 会检查体积（≤16MB）与
+`metadata.yaml` 五件套，通过后由平台重新打包并统计下载量。
+
+细节、维护顺序（改版本必须同步改索引与 MD5）和排障，都写在
+[docs/marketplace.md](docs/marketplace.md)。
+
 ## 站点侧准备
 
 1. 管理员登录面板 → 「幸运大转盘」→「抽奖设置 → 机器人」。
@@ -209,6 +234,14 @@ python -m py_compile main.py   # 语法检查
 ```
 
 `main.py` 是单文件、无第三方依赖；加命令时沿用 `@filter.command` + `event.plain_result` 即可。
+
+## 更新记录
+
+| 版本 | 内容 |
+| --- | --- |
+| v1.0.2 | 进插件市场：`market/plugins.json` 自定义源索引 + `plugins-md5.json`；`metadata.yaml` 补 `support_platforms` / `tags` / `social_link`，作者改为 GitHub 账号 `czm9919`（市场条目 ID 由 `author/name` 推导） |
+| v1.0.1 | 两段式冷却（成功 30s / 失败 3s）、handler 异常守卫、`terminate()` 清内存态、状态字典自动清理、429 映射成人话、脏配置回落默认 |
+| v1.0.0 | 首个版本：`/绑定 <码>`、`/绑定 测试`、自定义命令别名 |
 
 ## License
 
