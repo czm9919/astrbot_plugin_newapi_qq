@@ -1,9 +1,13 @@
 {
-  "api_base": "http://127.0.0.1:3000",
+  "api_base": "https://your-domain.com",
   "agent_token": "",
   "bind_command": "绑定",
   "timeout_seconds": 10,
   "cooldown_seconds": 30,
   "retry_cooldown_seconds": 3,
-  "self_cooldown_seconds": 3
+  "self_cooldown_seconds": 3,
+  "retry_attempts": 1,
+  "bypass_proxy": true,
+  "insecure_skip_verify": false,
+  "startup_check": true
 }

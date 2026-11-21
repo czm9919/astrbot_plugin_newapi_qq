@@ -28,7 +28,7 @@
 
 1. 拿包，两种方式都行：
 
-   - **直装包（推荐）**：从 [Releases](../../releases/latest) 下 `astrbot_plugin_newapi_qq-v1.0.4.zip`，
+   - **直装包（推荐）**：从 [Releases](../../releases/latest) 下 `astrbot_plugin_newapi_qq-v1.0.5.zip`，
      拖进 AstrBot WebUI 的插件页安装；
    - **源码**：`git clone https://github.com/czm9919/astrbot_plugin_newapi_qq.git`，把整个目录放进
      AstrBot 的 `data/plugins/`：
@@ -42,12 +42,17 @@
 
    | 配置项 | 默认 | 说明 |
    | --- | --- | --- |
-   | `api_base` | `http://127.0.0.1:3000` | 站点地址，**不要**带 `/api` |
+   | `api_base` | `http://127.0.0.1:3000` | 站点地址，**不要**带 `/api`。⚠️ 插件跑在 Docker 里时 `127.0.0.1` 是容器自己 |
    | `agent_token` | 空 | 与服务令牌一致，见下方「站点侧准备」 |
    | `bind_command` | `绑定` | 绑定命令名；改了就按 `/你改的名字 <码>` 使用 |
    | `timeout_seconds` | `10` | 请求站点超时秒数 |
+   | `retry_attempts` | `1` | 连接失败重试次数（0–4），只在连接没建立时生效 |
+   | `bypass_proxy` | `true` | 绕过 `HTTP_PROXY` / `HTTPS_PROXY`，见「连不上怎么办」 |
+   | `insecure_skip_verify` | `false` | 自签证书时打开，跳过 HTTPS 校验 |
+   | `startup_check` | `true` | 启动 3 秒后异步 ping 一次，结果写日志 |
    | `cooldown_seconds` | `30` | 同一 QQ **绑定成功后**的冷却 |
    | `retry_cooldown_seconds` | `3` | 同一 QQ **绑定失败后**的冷却 |
+   | `self_cooldown_seconds` | `3` | 自助查询（余额/签到/排行）的冷却 |
 
 也可以跳过 WebUI 表单，直接写 `data/config/astrbot_plugin_newapi_qq_config.json`：
 
@@ -57,8 +62,13 @@
   "agent_token": "<与服务令牌一致>",
   "bind_command": "绑定",
   "timeout_seconds": 10,
+  "retry_attempts": 1,
+  "bypass_proxy": true,
+  "insecure_skip_verify": false,
+  "startup_check": true,
   "cooldown_seconds": 30,
-  "retry_cooldown_seconds": 3
+  "retry_cooldown_seconds": 3,
+  "self_cooldown_seconds": 3
 }
 ```
 
@@ -240,6 +250,91 @@ sys.modules.update({"astrbot": types.ModuleType("astrbot"), "astrbot.api": api,
 python verify-plugin-v101.py main.py
 ```
 
+## 连不上怎么办（v1.0.5 重点）
+
+「站点明明活着，插件就是说连不上」有四个独立原因，症状都长一样：
+
+```
+站点连接失败（timeout）：http://127.0.0.1:3000
+```
+
+v1.0.5 起不再笼统报这一句，而是分辨出具体是哪一层，并给出对应的改法。
+
+### 1. 容器里填了 `127.0.0.1`（最常见）
+
+**插件和站点不在同一个进程里时，`127.0.0.1` 就不是「这台机器」，而是「当前这个容器」。**
+AstrBot 跑在 Docker 里、站点跑在宿主机或另一个容器里，`http://127.0.0.1:3000`
+永远连不上——容器里的 3000 端口没人监听。
+
+插件现在会识别这种情况，回复里直接给可用地址：
+
+```
+站点连接失败：插件跑在容器里，127.0.0.1 指的是容器自己，不是宿主机。
+请把 api_base 改成宿主机地址（当前：http://127.0.0.1:3000），例如：
+  · 同一 compose 网络：http://new-api:3000（用服务名）
+  · Linux 宿主机网关：http://172.17.0.1:3000
+  · 或公网/内网真实域名：https://api.example.com
+```
+
+判断口诀：**AstrBot 和站点在同一个 `docker-compose.yml` 里 → 用服务名；不在一起 → 用宿主机 IP 或域名。**
+
+### 2. 残留的代理环境变量
+
+镜像里带 `HTTP_PROXY` / `HTTPS_PROXY` 很常见。`urllib` 默认读环境变量，
+**连 `127.0.0.1` 和内网地址也会送去代理**，代理自然会拒。
+
+v1.0.5 起 `bypass_proxy` 默认 `true`，所有请求都绕开代理。只有当站点在墙外、
+确实需要代理才能访问时才关掉它。
+
+自测（在跑 AstrBot 的那个容器 / 机器里执行）：
+
+```bash
+curl -m 5 -v --noproxy '*' http://127.0.0.1:3000/api/qq/agent/ping \
+  -H "X-QQ-Agent-Token: <你的令牌>"
+```
+
+能回 `401`/`200` 说明网络没问题；`--noproxy '*'` 加上才通、不加不通，那就是代理在捣乱。
+
+### 3. 自签证书
+
+面板用自签 HTTPS 时 `urllib` 会直接拒绝。打开 `insecure_skip_verify` 即可。
+公网站点请保持关闭——跳过校验等于放弃中间人防护。
+
+### 4. 瞬时抖动
+
+`retry_attempts` 默认 `1`（总共打 2 次），但**只在「连接根本没建立」时重试**：
+
+| 情况 | 重试 | 为什么 |
+| --- | --- | --- |
+| `Connection refused` / DNS 解析失败 | ✅ | 请求绝没到过服务端，重试安全 |
+| 超时 | ❌ | 请求可能已被处理，重试会让**一次性绑定码被消费两次** |
+| 证书错误 | ❌ | 重试还是同样的错 |
+| HTTP 4xx / 5xx | ❌ | 服务端已明确答复，重试只是多打一次 |
+
+### 排查入口：`绑定 诊断`
+
+v1.0.5 起这条命令把环境信息也一并打出来，不用再猜：
+
+```
+插件 v1.0.5 在线
+命令名：绑定 / bind
+站点：http://127.0.0.1:3000
+令牌：已配置（尾号 a1b2）
+连通：HTTP 200 success
+环境：容器内，绕过代理，⚠ 回环地址在容器里不可用
+重试：最多 2 次　超时：10s
+会话：私聊　发送者 QQ：123456789
+```
+
+启动时也会自检一次（3 秒后异步执行，不阻塞加载），结果直接进日志：
+
+```
+[astrbot_plugin_newapi_qq] startup check OK — http://127.0.0.1:3000
+```
+
+连不上时是 `startup check FAILED — …` + 具体原因（含 `|` 分隔的排查建议）。
+不需要这个行为可以把 `startup_check` 关掉。
+
 ## 命令没反应怎么办
 
 先按顺序走这三步，基本能定位到具体一层：
@@ -248,7 +343,7 @@ python verify-plugin-v101.py main.py
    正常会有一行：
 
    ```
-   [astrbot_plugin_newapi_qq] loaded v1.0.4 api_base=http://127.0.0.1:3000 token=set commands=['绑定', 'bind']
+   [astrbot_plugin_newapi_qq] loaded v1.0.5 api_base=http://127.0.0.1:3000 token=set commands=['绑定', 'bind']
    ```
 
    没有这一行，就是插件没装进来：检查 `data/plugins/astrbot_plugin_newapi_qq/main.py`
@@ -269,8 +364,8 @@ v1.0.3 之前只认 `/绑定`（带半角斜杠），直接发「绑定 12345678
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
-| 发命令完全没回复 | 老版本只认 `/绑定`；或插件没加载 | 升级 v1.0.3，发 `绑定 诊断` 自查 |
-| 回复「站点连接失败」 | `api_base` 不可达 | 检查地址、防火墙、HTTPS 证书 |
+| 发命令完全没回复 | 老版本只认 `/绑定`；或插件没加载 | 升级 v1.0.5，发 `绑定 诊断` 自查 |
+| 回复「连不上站点」 | 容器回环 / 代理 / 证书 / 抖动，四种之一 | 见上一节「连不上怎么办」，诊断命令会写明是哪一种 |
 | 回复「还没配置服务令牌」 | 插件侧令牌为空 | 在 WebUI 填 `agent_token` |
 | 回复「令牌无效」 | 两边不一致 / 站点轮换过 | 重新复制，注意首尾空格 |
 | 回复「绑定码无效」 | 超过 10 分钟 / 已用过 / 重新生成过 | 回面板重新生成 |
@@ -282,7 +377,7 @@ v1.0.3 之前只认 `/绑定`（带半角斜杠），直接发「绑定 12345678
 
 ```bash
 python -m py_compile main.py                     # 语法检查
-python -m unittest discover -s tests -v          # 命令解析 / 去重 / 诊断（14 项，离线）
+python -m unittest discover -s tests -v          # 命令解析 / 去重 / 诊断 / 传输层（41 项，离线）
 ```
 
 `main.py` 是单文件、无第三方依赖；加命令时沿用 `@filter.command` + `event.plain_result` 即可。
@@ -291,6 +386,7 @@ python -m unittest discover -s tests -v          # 命令解析 / 去重 / 诊�
 
 | 版本 | 内容 |
 | --- | --- |
+| v1.0.5 | 专治「总是连不上」：默认绕开系统代理（容器残留 `HTTP_PROXY` 会吞掉回环与内网请求）；只在连接没建立（refused / DNS）时重试，超时与证书错误不重试以免一次性绑定码被消费两次；六类网络失败各自给人话文案；识别「容器内填 127.0.0.1」这个头号坑并直接给出可用替代地址；启动 3 秒后异步自检写日志（`initialize()` 钩子兜底）；`绑定 诊断` 升级为连通/环境/重试/超时四行；新增 `retry_attempts` / `bypass_proxy` / `insecure_skip_verify` / `startup_check` 四项配置；`tests/test_transport.py` 加 13 项离线用例（共 41 项，含真实本地 HTTP 服务验证代理绕过） |
 | v1.0.4 | 新增群内自助：`余额`（余额 + 今日用量 + 签到状态）、`签到`（代签，重复签到返回已签而非报错）、`排行`（今日消耗榜，用户名打码）；解析层统一成 `(动作, 参数)` 分发，绑定命令优先；群聊必须带 `/` 或 `@机器人`，避免日常聊天误触发；新增 3 秒自助冷却；`tests/` 再加 14 项用例（共 28 项） |
 | v1.0.3 | 修裸命令不响应：新增兜底路由，识别无斜杠 / 全角斜杠 / `@机器人` 前缀 / 紧贴写法；`@filter.command` 与兜底路由共用一次执行点，靠事件标记去重；新增 `绑定 诊断`（版本、站点、令牌尾号、回环一次给出）；加载时打印一行 `loaded vX` 日志；`tests/` 加 14 项离线用例 |
 | v1.0.2 | 进插件市场：`market/plugins.json` 自定义源索引 + `plugins-md5.json`；`metadata.yaml` 补 `support_platforms` / `tags` / `social_link`，作者改为 GitHub 账号 `czm9919`（市场条目 ID 由 `author/name` 推导） |

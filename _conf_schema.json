@@ -3,7 +3,7 @@
     "type": "string",
     "description": "New API 站点地址（不要带 /api 后缀）",
     "default": "http://127.0.0.1:3000",
-    "hint": "例如 https://api.example.com"
+    "hint": "例如 https://api.example.com。⚠️ 如果 AstrBot 跑在 Docker 里，127.0.0.1 指的是容器自己，必须改成宿主机地址或服务名（http://new-api:3000）"
   },
   "agent_token": {
     "type": "string",
@@ -22,6 +22,30 @@
     "description": "请求站点超时秒数",
     "default": 10,
     "hint": "站点在海外或链路差可以调到 20"
+  },
+  "retry_attempts": {
+    "type": "int",
+    "description": "连接失败的重试次数",
+    "default": 1,
+    "hint": "只在「连接根本没建立」（拒绝连接 / DNS 失败）时重试，超时和证书错误不重试，避免一次性绑定码被消费两次。0 表示不重试，最大 4"
+  },
+  "bypass_proxy": {
+    "type": "bool",
+    "description": "绕过系统代理（HTTP_PROXY / HTTPS_PROXY）",
+    "default": true,
+    "hint": "默认开启。容器里残留的代理变量会把回环/内网请求也送去代理，是「站点明明活着却连不上」的常见原因；站点在墙外需要代理时才关掉"
+  },
+  "insecure_skip_verify": {
+    "type": "bool",
+    "description": "跳过 HTTPS 证书校验",
+    "default": false,
+    "hint": "站点用自签证书时打开；公网站点请保持关闭"
+  },
+  "startup_check": {
+    "type": "bool",
+    "description": "启动时自检站点连通性",
+    "default": true,
+    "hint": "加载后 3 秒异步 ping 一次，结果写进 AstrBot 日志；连不上时日志里会有具体原因，不影响命令使用"
   },
   "cooldown_seconds": {
     "type": "int",

@@ -72,7 +72,7 @@ https://raw.githubusercontent.com/czm9919/astrbot_plugin_newapi_qq/main/market/p
 | --- | --- | --- |
 | 仓库公开 | 必须 | ✅ public |
 | `metadata.yaml` 五件套 | `name` / `desc` / `version` / `author` / `repo` | ✅ 齐全 |
-| 版本号 | 语义化，且**每次发布必须比线上大** | ✅ `v1.0.3` |
+| 版本号 | 语义化，且**每次发布必须比线上大** | ✅ `v1.0.5` |
 | zip 体积 | ≤ 16MB（CI 会直接拒） | ✅ 安装包 7KB |
 | 仓库卫生 | 不含 `.git`、`__pycache__`、`node_modules`、真实配置 | ✅ `.gitignore` 已排除，真实配置不入库 |
 | 依赖 | 首次运行会自动装 `requirements.txt` | ✅ 只有标准库 |
@@ -81,8 +81,8 @@ https://raw.githubusercontent.com/czm9919/astrbot_plugin_newapi_qq/main/market/p
 通过后，市场条目会长这样（ID = `czm9919/astrbot_plugin_newapi_qq`）：
 
 ```
-author=czm9919  name=astrbot_plugin_newapi_qq  version=1.0.3
-download_url=https://.../astrbot_plugin_newapi_qq-1.0.3-<commit12>.zip
+author=czm9919  name=astrbot_plugin_newapi_qq  version=1.0.5
+download_url=https://.../astrbot_plugin_newapi_qq-1.0.5-<commit12>.zip
 category=工具  stars / download_count 由平台统计
 ```
 
@@ -91,8 +91,8 @@ category=工具  stars / download_count 由平台统计
 自定义源是手写索引，**版本号、下载地址、MD5 三者必须一起改**，否则市场里点安装会 404
 或装到旧包：
 
-1. 改 `metadata.yaml` 的 `version`（如 `v1.0.3`）；
-2. 打标签、建 Release、上传新的 `astrbot_plugin_newapi_qq-v1.0.3.zip`；
+1. 改 `metadata.yaml` 的 `version`（如 `v1.0.5`）；
+2. 打标签、建 Release、上传新的 `astrbot_plugin_newapi_qq-v1.0.5.zip`；
 3. 改 `market/plugins.json` 的 `version` 与 `download_url`；
 4. 重算 MD5 写进 `market/plugins-md5.json`：
 

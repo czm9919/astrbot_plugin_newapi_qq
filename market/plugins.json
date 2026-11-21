@@ -2,12 +2,12 @@
   "czm9919/astrbot_plugin_newapi_qq": {
     "author": "czm9919",
     "name": "astrbot_plugin_newapi_qq",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "repo": "https://github.com/czm9919/astrbot_plugin_newapi_qq",
     "display_name": "New API QQ 绑定",
     "short_desc": "QQ 号绑定 New API 账号",
-    "desc": "把 QQ 号绑定到 New API 面板账号，并在群里自助查余额、签到、看用量榜。用户在面板生成 8 位一次性绑定码，私聊机器人发 /绑定 <码>（或直接发「绑定 <码>」）即可绑定。v1.0.4 新增四条自助命令：「余额/查询」看余额与今日用量、「签到」领免费额度、「排行/榜单」看今日消耗榜（用户名打码）；私聊可直接发，群聊需带 / 或 @机器人，避免日常聊天误触发。⚠️ 本插件只是调用端：站点必须是配套的 New API 定制分支（v1.0.0-rc.51+hc37 起，自助命令需 hc45 起），并在面板生成机器人服务令牌。",
-    "download_url": "https://github.com/czm9919/astrbot_plugin_newapi_qq/releases/download/v1.0.4/astrbot_plugin_newapi_qq-v1.0.4.zip",
+    "desc": "把 QQ 号绑定到 New API 面板账号，并在群里自助查余额、签到、看用量榜。用户在面板生成 8 位一次性绑定码，私聊机器人发 /绑定 <码>（或直接发「绑定 <码>」）即可绑定。v1.0.5 专治「总是连不上」：默认绕过系统代理（容器里残留的 HTTP_PROXY 会吞掉回环请求）、只在连接根本没建立时重试（拒绝连接/DNS 失败）、六类网络失败各自给人话文案，并识别「容器内填 127.0.0.1」这个头号坑、直接给出可用替代地址；启动后 3 秒异步自检写日志，「绑定 诊断」升级为连通/环境/重试/超时四行。⚠️ 本插件只是调用端：站点必须是配套的 New API 定制分支（v1.0.0-rc.51+hc37 起，自助命令需 hc45 起），并在面板生成机器人服务令牌。",
+    "download_url": "https://github.com/czm9919/astrbot_plugin_newapi_qq/releases/download/v1.0.5/astrbot_plugin_newapi_qq-v1.0.5.zip",
     "category": "工具",
     "tags": [
       "QQ",
@@ -21,7 +21,7 @@
     ],
     "astrbot_version": ">=4.0.0",
     "social_link": "https://github.com/czm9919",
-    "updated_at": "2026-11-21T10:40:00Z",
+    "updated_at": "2026-12-03T10:00:00Z",
     "stars": 0,
     "download_count": 0
   }
