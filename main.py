@@ -22,6 +22,13 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
 PLUGIN_NAME = "astrbot_plugin_newapi_qq"
+PLUGIN_VERSION = "1.0.3"
+
+# 裸命令（不带斜杠）也接受的中文/英文命令名。斜杠形式仍由 @filter.command 处理，
+# 两条路都走 _dispatch，靠事件标记去重，不会回两次。
+DEFAULT_COMMAND_NAMES = ("绑定", "bind")
+# 命令名与参数之间允许的分隔符（含全角）
+SEPARATORS = (" ", "\u3000", ":", "：", ",", "，")
 
 # 本地冷却分段口径：
 #   * 成功锁 30 秒——绑定不可重入，连点只会白打请求；
@@ -48,7 +55,7 @@ ERROR_HINTS = {
     PLUGIN_NAME,
     "new-api-operator",
     "把 QQ 号绑定到 New API 面板账号，解锁幸运大转盘与免费模型",
-    "1.0.0",
+    PLUGIN_VERSION,
 )
 class NewApiQQBindPlugin(Star):
     def __init__(self, context: Context, config: dict | None = None):
@@ -57,6 +64,17 @@ class NewApiQQBindPlugin(Star):
         # 纯内存冷却状态：进程重启即清零，不落库，与站点侧限流互为备份
         self._last_attempt: dict[str, float] = {}
         self._last_success: dict[str, float] = {}
+        # 加载一行日志：命令没反应时，先看 AstrBot 日志里有没有这一行，
+        # 没有就是插件根本没加载（目录层级、语法错误、版本不兼容）。
+        try:
+            logger.info(
+                f"[{PLUGIN_NAME}] loaded v{PLUGIN_VERSION} "
+                f"api_base={self._base_url()} "
+                f"token={'set' if self._cfg('agent_token') else 'MISSING'} "
+                f"commands={self._command_names()}"
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ utils
 
@@ -152,22 +170,153 @@ class NewApiQQBindPlugin(Star):
         """插件卸载/重载时清空内存态，避免热重载后残留冷却。"""
         self._last_attempt.clear()
         self._last_success.clear()
+        handled = getattr(self, "_handled_ids", None)
+        if handled is not None:
+            handled.clear()
 
     # ---------------------------------------------------------------- commands
 
     @filter.command("绑定")
-    async def bind(self, event: AstrMessageEvent, code: str | None = None):
+    async def bind(self, event: AstrMessageEvent, code: str = ""):
         """绑定个人 QQ 到 New API 面板账号：/绑定 <绑定码>"""
-        async for result in self._handle_bind(event, code):
+        async for result in self._dispatch(event, code):
             yield result
 
     @filter.command("bind")
-    async def bind_en(self, event: AstrMessageEvent, code: str | None = None):
+    async def bind_en(self, event: AstrMessageEvent, code: str = ""):
         """/bind <code> — English alias."""
-        async for result in self._handle_bind(event, code):
+        async for result in self._dispatch(event, code):
             yield result
 
-    async def _handle_bind(self, event: AstrMessageEvent, code: str | None):
+    # 兜底路由：@filter.command 只吃「/命令名」这一种形式。实际用起来，很多人
+    # 直接发「绑定 12345678」，或者客户端把开头的斜杠吞掉，这时命令看起来就是
+    # 「完全没反应」。这个 handler 接住裸命令、全角斜杠、@机器人 前缀、
+    # 以及 /绑定12345678 这种紧贴写法。
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def command_router(self, event: AstrMessageEvent):
+        code = self._parse_command(getattr(event, "message_str", "") or "", event)
+        if code is None:
+            return
+        async for result in self._dispatch(event, code):
+            yield result
+
+    async def _dispatch(self, event: AstrMessageEvent, code: str):
+        """所有入口的唯一执行点。
+
+        AstrBot 会把同一个事件依次交给多个 handler：`@filter.command` 命中时，
+        `event_message_type(ALL)` 也会收到同一条消息。所以在事件对象上打标记，
+        保证只处理一次——否则用户会收到两条一样的回复。
+        """
+        if self._already_handled(event):
+            return
+        self._mark_handled(event)
+        try:
+            async for result in self._handle_bind(event, code):
+                yield result
+        finally:
+            try:
+                event.stop_event()
+            except Exception:
+                pass
+
+    # ---- 事件去重标记 -------------------------------------------------
+    # 优先用 AstrBot 自己的 set_extra/get_extra；老版本没有这两个方法时退回
+    # 属性赋值；两种都不行（事件对象带 __slots__）时用 id 集合兜底。
+    # 任何一步都不允许抛异常——这里抛了，用户看到的就是「命令没反应」。
+    _HANDLED_KEY = "newapi_qq_handled"
+
+    def _already_handled(self, event: AstrMessageEvent) -> bool:
+        getter = getattr(event, "get_extra", None)
+        if callable(getter):
+            try:
+                return bool(getter(self._HANDLED_KEY))
+            except Exception:
+                pass
+        if getattr(event, "_newapi_qq_handled", False):
+            return True
+        return id(event) in getattr(self, "_handled_ids", ())
+
+    def _mark_handled(self, event: AstrMessageEvent) -> None:
+        setter = getattr(event, "set_extra", None)
+        if callable(setter):
+            try:
+                setter(self._HANDLED_KEY, True)
+                return
+            except Exception:
+                pass
+        try:
+            setattr(event, "_newapi_qq_handled", True)
+            return
+        except Exception:
+            pass
+        handled = getattr(self, "_handled_ids", None)
+        if handled is None:
+            handled = self._handled_ids = set()
+        handled.add(id(event))
+        if len(handled) > 512:
+            handled.clear()
+
+    def _command_names(self) -> list:
+        """当前生效的命令名。配置了自定义名就只认自定义名。"""
+        custom = self._cfg("bind_command", "绑定")
+        if custom and custom not in ("",) + DEFAULT_COMMAND_NAMES:
+            return [custom]
+        return list(DEFAULT_COMMAND_NAMES)
+
+    def _is_private(self, event: AstrMessageEvent) -> bool:
+        checker = getattr(event, "is_private_chat", None)
+        if callable(checker):
+            try:
+                return bool(checker())
+            except Exception:
+                pass
+        return False
+
+    def _strip_prefix(self, raw: str) -> str:
+        """去掉指令前缀（半角/全角斜杠、感叹号）。"""
+        for prefix in ("/", "／", "!", "！"):
+            if raw.startswith(prefix):
+                return raw[1:].lstrip()
+        return raw
+
+    def _parse_command(self, text: str, event=None):
+        """从消息里解析绑定码；不是本插件的命令时返回 None。
+
+        返回 "" 表示命令被识别但没带参数（播用法），返回其它字符串即绑定码。
+        """
+        raw = (text or "").strip()
+        if not raw:
+            return None
+        raw = self._strip_prefix(raw)
+        # 去掉开头的 @机器人，再去一次前缀（微信/QQ 常见顺序是「@bot /命令」）
+        while raw.startswith("@"):
+            parts = raw.split(None, 1)
+            if len(parts) < 2:
+                return None
+            raw = self._strip_prefix(parts[1].lstrip())
+        if not raw:
+            return None
+        for name in self._command_names():
+            if not name or not raw.startswith(name):
+                continue
+            rest = raw[len(name):]
+            if not rest:
+                code = ""
+            elif rest[0] in SEPARATORS:
+                code = rest[1:].strip()
+            elif rest[0].isdigit() or (rest[0].isascii() and rest[0].isalpha()):
+                # 紧贴写法：/绑定12345678。只认 ASCII 字母数字，
+                # 否则「绑定是什么意思」会被当成绑定码 "是什么意思"。
+                code = rest.strip()
+            else:
+                return None
+            # 群聊里只发「绑定」两个字不插话，避免日常聊天被误触发。
+            if code == "" and event is not None and not self._is_private(event):
+                return None
+            return code
+        return None
+
+    async def _handle_bind(self, event: AstrMessageEvent, code: str = ""):
         """外层兜底。
 
         插件抛出的异常会被 AstrBot 的钩子链路放大——社区里有插件因为一个未捕获
@@ -184,7 +333,7 @@ class NewApiQQBindPlugin(Star):
             except Exception:
                 pass
 
-    async def _handle_bind_inner(self, event: AstrMessageEvent, code: str | None):
+    async def _handle_bind_inner(self, event: AstrMessageEvent, code: str = ""):
         code = (code or "").strip()
         qq = self._sender_qq(event)
 
@@ -192,16 +341,24 @@ class NewApiQQBindPlugin(Star):
             yield event.plain_result("拿不到你的 QQ 号，请私聊机器人使用本命令。")
             return
 
+        # 诊断永远可用，不依赖是否已配令牌
+        if code in ("诊断", "diag"):
+            status, body = await self._call("GET", "/api/qq/agent/ping")
+            yield event.plain_result(self._diagnostic_text(event, qq, status, body))
+            return
+
         if not self._cfg("agent_token"):
             yield event.plain_result(
-                "机器人还没配置服务令牌，请联系站点管理员在面板填写（qq_agent_token）。"
+                "机器人还没配置服务令牌，请联系站点管理员在面板填写（qq_agent_token）。\n"
+                "排查：发「绑定 诊断」可查看插件版本与站点连通性。"
             )
             return
 
         # 自检：/绑定 测试
         if code in ("测试", "test", "ping"):
             status, body = await self._call("GET", "/api/qq/agent/ping")
-            if status == 200 and body.get("success"):
+            ok = status == 200 and bool(body.get("success"))
+            if ok:
                 data = body.get("data") or {}
                 yield event.plain_result(
                     "站点连接正常。免费模型绑定要求："
@@ -218,8 +375,9 @@ class NewApiQQBindPlugin(Star):
 
         if not code:
             yield event.plain_result(
-                "用法：/绑定 <绑定码>\n"
-                "绑定码请到面板「幸运大转盘 → QQ 绑定」生成，10 分钟内有效。"
+                "用法：/绑定 <绑定码>　（直接发「绑定 <绑定码>」也可以）\n"
+                "绑定码请到面板「幸运大转盘 → QQ 绑定」生成，10 分钟内有效。\n"
+                "自检：/绑定 测试　诊断：/绑定 诊断"
             )
             return
 
@@ -239,22 +397,24 @@ class NewApiQQBindPlugin(Star):
         self._mark_attempt(qq, False)
         yield event.plain_result(self._error_text(status, body))
 
-    # 自定义命令名（配置项 bind_command）：只在名字不是默认的两个时才接管
-    @filter.event_message_type(filter.EventMessageType.ALL)
-    async def alias_router(self, event: AstrMessageEvent):
-        custom = self._cfg("bind_command", "绑定")
-        if custom in ("", "绑定", "bind"):
-            return
-        text = (event.message_str or "").strip()
-        for prefix in (f"/{custom}", custom):
-            if text.startswith(prefix):
-                code = text[len(prefix):].strip()
-                # 去掉可能的分隔符
-                code = code.lstrip(" :：").strip()
-                async for result in self._handle_bind(event, code):
-                    yield result
-                event.stop_event()
-                return
+    def _diagnostic_text(self, event: AstrMessageEvent, qq: str, status: int, body: dict) -> str:
+        """一条消息里给出排查「命令没反应」所需的全部事实。"""
+        token = self._cfg("agent_token")
+        if token:
+            tail = token[-4:] if len(token) >= 4 else "****"
+            token_text = f"已配置（尾号 {tail}）"
+        else:
+            token_text = "未配置"
+        ping_text = f"HTTP {status}" + (" success" if body.get("success") else " 失败")
+        return (
+            f"插件 v{PLUGIN_VERSION} 在线\n"
+            f"命令名：{' / '.join(self._command_names())}\n"
+            f"站点：{self._base_url()}\n"
+            f"令牌：{token_text}\n"
+            f"回环：{ping_text}\n"
+            f"会话：{'私聊' if self._is_private(event) else '群聊'}　发送者 QQ：{qq}\n"
+            "若这条能收到，说明插件本身工作正常；命令没反应通常是没加 / 或插件未加载。"
+        )
 
     # ------------------------------------------------------------------ helpers
 

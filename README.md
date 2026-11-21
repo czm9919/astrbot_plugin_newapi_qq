@@ -28,7 +28,7 @@
 
 1. 拿包，两种方式都行：
 
-   - **直装包（推荐）**：从 [Releases](../../releases/latest) 下 `astrbot_plugin_newapi_qq-v1.0.1.zip`，
+   - **直装包（推荐）**：从 [Releases](../../releases/latest) 下 `astrbot_plugin_newapi_qq-v1.0.3.zip`，
      拖进 AstrBot WebUI 的插件页安装；
    - **源码**：`git clone https://github.com/czm9919/astrbot_plugin_newapi_qq.git`，把整个目录放进
      AstrBot 的 `data/plugins/`：
@@ -101,9 +101,14 @@ URL ：https://raw.githubusercontent.com/czm9919/astrbot_plugin_newapi_qq/main/m
 | 命令 | 作用 |
 | --- | --- |
 | `/绑定 <码>` | 用面板生成的 8 位码完成绑定 |
+| `绑定 <码>` | 同上，**不带斜杠也行**（v1.0.3 起） |
 | `/绑定 测试` | 连通性自检，返回站点是否要求免费模型绑定 QQ |
+| `/绑定 诊断` | 一条消息给出插件版本、站点地址、令牌尾号、回环结果，专门用来查「命令没反应」 |
 | `/bind <码>` | 英文别名 |
-| `/绑定` | 不带码时回用法提示 |
+| `/绑定` | 不带码时回用法提示（群里只发「绑定」两个字不插话，避免误触发） |
+
+命令识别是宽松的，下面这些写法等价：`/绑定 ABCD2345`、`绑定 ABCD2345`、
+`／绑定 ABCD2345`（全角斜杠）、`/绑定ABCD2345`（紧贴）、`@机器人 /绑定 ABCD2345`。
 
 绑定成功示例：
 
@@ -215,10 +220,36 @@ sys.modules.update({"astrbot": types.ModuleType("astrbot"), "astrbot.api": api,
 python verify-plugin-v101.py main.py
 ```
 
+## 命令没反应怎么办
+
+先按顺序走这三步，基本能定位到具体一层：
+
+1. **确认插件加载了。** AstrBot 日志里搜 `astrbot_plugin_newapi_qq] loaded`，
+   正常会有一行：
+
+   ```
+   [astrbot_plugin_newapi_qq] loaded v1.0.3 api_base=http://127.0.0.1:3000 token=set commands=['绑定', 'bind']
+   ```
+
+   没有这一行，就是插件没装进来：检查 `data/plugins/astrbot_plugin_newapi_qq/main.py`
+   是否直接存在（不要再套一层同名目录），然后重启 AstrBot。
+
+2. **发 `绑定 诊断`（不带斜杠）。** 能收到回复就说明命令层、网络层都通，
+   回复里会写清版本、令牌尾号、`HTTP 200 success` 还是失败。收不到回复，
+   说明消息没进到插件（唤醒词 / 白名单 / 另一个插件先 `stop_event` 了）。
+
+3. **确认是私聊、且 QQ 号能取到。** 平台侧拿不到发送者 QQ 时插件会回
+   「拿不到你的 QQ 号」。群聊需要 @机器人 或带参数，单纯发「绑定」两个字
+   是故意不响应的。
+
+v1.0.3 之前只认 `/绑定`（带半角斜杠），直接发「绑定 12345678」不会有任何反应，
+这是老版本最常见的问题；升级到 v1.0.3 即可。
+
 ## 故障排查
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
+| 发命令完全没回复 | 老版本只认 `/绑定`；或插件没加载 | 升级 v1.0.3，发 `绑定 诊断` 自查 |
 | 回复「站点连接失败」 | `api_base` 不可达 | 检查地址、防火墙、HTTPS 证书 |
 | 回复「还没配置服务令牌」 | 插件侧令牌为空 | 在 WebUI 填 `agent_token` |
 | 回复「令牌无效」 | 两边不一致 / 站点轮换过 | 重新复制，注意首尾空格 |
@@ -230,7 +261,8 @@ python verify-plugin-v101.py main.py
 ## 开发
 
 ```bash
-python -m py_compile main.py   # 语法检查
+python -m py_compile main.py                     # 语法检查
+python -m unittest discover -s tests -v          # 命令解析 / 去重 / 诊断（14 项，离线）
 ```
 
 `main.py` 是单文件、无第三方依赖；加命令时沿用 `@filter.command` + `event.plain_result` 即可。
@@ -239,6 +271,7 @@ python -m py_compile main.py   # 语法检查
 
 | 版本 | 内容 |
 | --- | --- |
+| v1.0.3 | 修裸命令不响应：新增兜底路由，识别无斜杠 / 全角斜杠 / `@机器人` 前缀 / 紧贴写法；`@filter.command` 与兜底路由共用一次执行点，靠事件标记去重；新增 `绑定 诊断`（版本、站点、令牌尾号、回环一次给出）；加载时打印一行 `loaded vX` 日志；`tests/` 加 14 项离线用例 |
 | v1.0.2 | 进插件市场：`market/plugins.json` 自定义源索引 + `plugins-md5.json`；`metadata.yaml` 补 `support_platforms` / `tags` / `social_link`，作者改为 GitHub 账号 `czm9919`（市场条目 ID 由 `author/name` 推导） |
 | v1.0.1 | 两段式冷却（成功 30s / 失败 3s）、handler 异常守卫、`terminate()` 清内存态、状态字典自动清理、429 映射成人话、脏配置回落默认 |
 | v1.0.0 | 首个版本：`/绑定 <码>`、`/绑定 测试`、自定义命令别名 |

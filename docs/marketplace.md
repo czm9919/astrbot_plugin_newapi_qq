@@ -72,7 +72,7 @@ https://raw.githubusercontent.com/czm9919/astrbot_plugin_newapi_qq/main/market/p
 | --- | --- | --- |
 | 仓库公开 | 必须 | ✅ public |
 | `metadata.yaml` 五件套 | `name` / `desc` / `version` / `author` / `repo` | ✅ 齐全 |
-| 版本号 | 语义化，且**每次发布必须比线上大** | ✅ `v1.0.2` |
+| 版本号 | 语义化，且**每次发布必须比线上大** | ✅ `v1.0.3` |
 | zip 体积 | ≤ 16MB（CI 会直接拒） | ✅ 安装包 7KB |
 | 仓库卫生 | 不含 `.git`、`__pycache__`、`node_modules`、真实配置 | ✅ `.gitignore` 已排除，真实配置不入库 |
 | 依赖 | 首次运行会自动装 `requirements.txt` | ✅ 只有标准库 |
@@ -81,8 +81,8 @@ https://raw.githubusercontent.com/czm9919/astrbot_plugin_newapi_qq/main/market/p
 通过后，市场条目会长这样（ID = `czm9919/astrbot_plugin_newapi_qq`）：
 
 ```
-author=czm9919  name=astrbot_plugin_newapi_qq  version=1.0.2
-download_url=https://.../astrbot_plugin_newapi_qq-1.0.2-<commit12>.zip
+author=czm9919  name=astrbot_plugin_newapi_qq  version=1.0.3
+download_url=https://.../astrbot_plugin_newapi_qq-1.0.3-<commit12>.zip
 category=工具  stars / download_count 由平台统计
 ```
 
