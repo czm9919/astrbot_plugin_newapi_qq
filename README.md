@@ -28,7 +28,7 @@
 
 1. 拿包，两种方式都行：
 
-   - **直装包（推荐）**：从 [Releases](../../releases/latest) 下 `astrbot_plugin_newapi_qq-v1.0.3.zip`，
+   - **直装包（推荐）**：从 [Releases](../../releases/latest) 下 `astrbot_plugin_newapi_qq-v1.0.4.zip`，
      拖进 AstrBot WebUI 的插件页安装；
    - **源码**：`git clone https://github.com/czm9919/astrbot_plugin_newapi_qq.git`，把整个目录放进
      AstrBot 的 `data/plugins/`：
@@ -107,6 +107,26 @@ URL ：https://raw.githubusercontent.com/czm9919/astrbot_plugin_newapi_qq/main/m
 | `/bind <码>` | 英文别名 |
 | `/绑定` | 不带码时回用法提示（群里只发「绑定」两个字不插话，避免误触发） |
 
+### 自助查询（v1.0.4 起，需站点 hc45+）
+
+| 命令 | 别名 | 作用 |
+| --- | --- | --- |
+| `余额` | `查询` / `me` | 余额、今日用量与上限、今天是否已签到 |
+| `签到` | `checkin` | 领当日免费额度，已签会告诉你明天再来 |
+| `排行` | `榜单` / `rank` | 今日消耗榜前十，用户名打码 |
+
+私聊直接发裸命令即可；**群聊必须带 `/` 或 `@机器人`**，比如 `/余额`、
+`@机器人 签到`。这样「我余额不够了」这类日常聊天不会被当成指令。
+自助命令有 3 秒本地冷却防刷屏（插件配置 `self_cooldown_seconds`）。
+
+```
+/余额
+站点账号：alice
+余额：$0.2469（123,456 额度）
+今日用量：60,000 / 50,000（已达上限，明天 0 点重置）
+今日签到：未签到（可得 1,000~10,000，发「签到」领取）
+```
+
 命令识别是宽松的，下面这些写法等价：`/绑定 ABCD2345`、`绑定 ABCD2345`、
 `／绑定 ABCD2345`（全角斜杠）、`/绑定ABCD2345`（紧贴）、`@机器人 /绑定 ABCD2345`。
 
@@ -115,7 +135,7 @@ URL ：https://raw.githubusercontent.com/czm9919/astrbot_plugin_newapi_qq/main/m
 ```
 绑定成功 ✅
 站点账号：alice
-QQ：123****89
+QQ：123456789
 现在可以回面板抽奖、使用免费模型了。
 ```
 
@@ -228,7 +248,7 @@ python verify-plugin-v101.py main.py
    正常会有一行：
 
    ```
-   [astrbot_plugin_newapi_qq] loaded v1.0.3 api_base=http://127.0.0.1:3000 token=set commands=['绑定', 'bind']
+   [astrbot_plugin_newapi_qq] loaded v1.0.4 api_base=http://127.0.0.1:3000 token=set commands=['绑定', 'bind']
    ```
 
    没有这一行，就是插件没装进来：检查 `data/plugins/astrbot_plugin_newapi_qq/main.py`
@@ -271,6 +291,7 @@ python -m unittest discover -s tests -v          # 命令解析 / 去重 / 诊�
 
 | 版本 | 内容 |
 | --- | --- |
+| v1.0.4 | 新增群内自助：`余额`（余额 + 今日用量 + 签到状态）、`签到`（代签，重复签到返回已签而非报错）、`排行`（今日消耗榜，用户名打码）；解析层统一成 `(动作, 参数)` 分发，绑定命令优先；群聊必须带 `/` 或 `@机器人`，避免日常聊天误触发；新增 3 秒自助冷却；`tests/` 再加 14 项用例（共 28 项） |
 | v1.0.3 | 修裸命令不响应：新增兜底路由，识别无斜杠 / 全角斜杠 / `@机器人` 前缀 / 紧贴写法；`@filter.command` 与兜底路由共用一次执行点，靠事件标记去重；新增 `绑定 诊断`（版本、站点、令牌尾号、回环一次给出）；加载时打印一行 `loaded vX` 日志；`tests/` 加 14 项离线用例 |
 | v1.0.2 | 进插件市场：`market/plugins.json` 自定义源索引 + `plugins-md5.json`；`metadata.yaml` 补 `support_platforms` / `tags` / `social_link`，作者改为 GitHub 账号 `czm9919`（市场条目 ID 由 `author/name` 推导） |
 | v1.0.1 | 两段式冷却（成功 30s / 失败 3s）、handler 异常守卫、`terminate()` 清内存态、状态字典自动清理、429 映射成人话、脏配置回落默认 |

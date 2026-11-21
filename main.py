@@ -22,13 +22,29 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
 PLUGIN_NAME = "astrbot_plugin_newapi_qq"
-PLUGIN_VERSION = "1.0.3"
+PLUGIN_VERSION = "1.0.4"
 
 # 裸命令（不带斜杠）也接受的中文/英文命令名。斜杠形式仍由 @filter.command 处理，
 # 两条路都走 _dispatch，靠事件标记去重，不会回两次。
 DEFAULT_COMMAND_NAMES = ("绑定", "bind")
 # 命令名与参数之间允许的分隔符（含全角）
 SEPARATORS = (" ", "\u3000", ":", "：", ",", "，")
+
+# 自助查询命令（v1.0.4）：命令名 -> 站点侧动作。
+# 这些命令不接受参数，群聊里必须带 / 或 @机器人 才触发，避免把
+# 「我余额不够了」这类日常聊天当成指令。
+SELF_COMMANDS = {
+    "余额": "me",
+    "查询": "me",
+    "me": "me",
+    "签到": "checkin",
+    "checkin": "checkin",
+    "排行": "rank",
+    "榜单": "rank",
+    "rank": "rank",
+}
+# 自助命令在群聊里的冷却：只防连点刷屏，不影响正常使用
+SELF_COOLDOWN_DEFAULT = 3
 
 # 本地冷却分段口径：
 #   * 成功锁 30 秒——绑定不可重入，连点只会白打请求；
@@ -47,6 +63,8 @@ ERROR_HINTS = {
     "QQ_AGENT_UNAUTHORIZED": "机器人令牌无效，请联系管理员检查配置。",
     "QQ_AGENT_UNAVAILABLE": "站点尚未开启机器人接入（未配置服务令牌），请联系管理员。",
     "QQ_AGENT_RATE_LIMITED": "操作太频繁了，请过一会儿再试。",
+    "QQ_AGENT_ACCOUNT_DISABLED": "你的站点账号已被禁用，请联系管理员。",
+    "QQ_AGENT_CHECKIN_DISABLED": "站点暂未开启签到功能。",
     "INVALID_REQUEST": "请求格式不对，请检查绑定码。",
 }
 
@@ -64,6 +82,7 @@ class NewApiQQBindPlugin(Star):
         # 纯内存冷却状态：进程重启即清零，不落库，与站点侧限流互为备份
         self._last_attempt: dict[str, float] = {}
         self._last_success: dict[str, float] = {}
+        self._last_self: dict[str, float] = {}
         # 加载一行日志：命令没反应时，先看 AstrBot 日志里有没有这一行，
         # 没有就是插件根本没加载（目录层级、语法错误、版本不兼容）。
         try:
@@ -170,6 +189,9 @@ class NewApiQQBindPlugin(Star):
         """插件卸载/重载时清空内存态，避免热重载后残留冷却。"""
         self._last_attempt.clear()
         self._last_success.clear()
+        last_self = getattr(self, "_last_self", None)
+        if last_self is not None:
+            last_self.clear()
         handled = getattr(self, "_handled_ids", None)
         if handled is not None:
             handled.clear()
@@ -194,11 +216,16 @@ class NewApiQQBindPlugin(Star):
     # 以及 /绑定12345678 这种紧贴写法。
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def command_router(self, event: AstrMessageEvent):
-        code = self._parse_command(getattr(event, "message_str", "") or "", event)
-        if code is None:
+        parsed = self._parse_any(getattr(event, "message_str", "") or "", event)
+        if parsed is None:
             return
-        async for result in self._dispatch(event, code):
-            yield result
+        command, arg = parsed
+        if command == "bind":
+            async for result in self._dispatch(event, arg):
+                yield result
+        else:
+            async for result in self._dispatch_self(event, command):
+                yield result
 
     async def _dispatch(self, event: AstrMessageEvent, code: str):
         """所有入口的唯一执行点。
@@ -212,6 +239,20 @@ class NewApiQQBindPlugin(Star):
         self._mark_handled(event)
         try:
             async for result in self._handle_bind(event, code):
+                yield result
+        finally:
+            try:
+                event.stop_event()
+            except Exception:
+                pass
+
+    async def _dispatch_self(self, event: AstrMessageEvent, command: str):
+        """自助查询的第二条执行路径，同样走一次性标记。"""
+        if self._already_handled(event):
+            return
+        self._mark_handled(event)
+        try:
+            async for result in self._handle_self(event, command):
                 yield result
         finally:
             try:
@@ -279,42 +320,80 @@ class NewApiQQBindPlugin(Star):
                 return raw[1:].lstrip()
         return raw
 
-    def _parse_command(self, text: str, event=None):
-        """从消息里解析绑定码；不是本插件的命令时返回 None。
-
-        返回 "" 表示命令被识别但没带参数（播用法），返回其它字符串即绑定码。
-        """
+    def _normalize(self, text: str):
+        """去掉前缀与 @机器人，返回 (正文, 是否带过前缀)。"""
         raw = (text or "").strip()
-        if not raw:
-            return None
-        raw = self._strip_prefix(raw)
+        prefixed = False
+        stripped = self._strip_prefix(raw)
+        if stripped != raw:
+            prefixed = True
+            raw = stripped
         # 去掉开头的 @机器人，再去一次前缀（微信/QQ 常见顺序是「@bot /命令」）
         while raw.startswith("@"):
             parts = raw.split(None, 1)
             if len(parts) < 2:
-                return None
+                return "", prefixed
+            prefixed = True
             raw = self._strip_prefix(parts[1].lstrip())
+        return raw, prefixed
+
+    def _match_name(self, raw: str, name: str, allow_glued: bool):
+        """raw 以 name 开头时返回剩余参数；不是该命令返回 None。
+
+        返回 "" 表示命令被识别但没带参数。
+        """
+        if not name or not raw.startswith(name):
+            return None
+        rest = raw[len(name):]
+        if not rest:
+            return ""
+        if rest[0] in SEPARATORS:
+            return rest[1:].strip()
+        if allow_glued and (rest[0].isdigit() or (rest[0].isascii() and rest[0].isalpha())):
+            # 紧贴写法：/绑定12345678。只认 ASCII 字母数字，
+            # 否则「绑定是什么意思」会被当成绑定码 "是什么意思"。
+            return rest.strip()
+        return None
+
+    def _parse_any(self, text: str, event=None):
+        """解析任意本插件命令，返回 (动作, 参数)；都不匹配返回 None。
+
+        动作取值：bind / me / checkin / rank。绑定之外的命令不接受参数，
+        群聊里还必须带 / 或 @机器人 才触发——否则「我余额不够了」会被当成指令。
+        """
+        raw, prefixed = self._normalize(text)
         if not raw:
             return None
+
         for name in self._command_names():
-            if not name or not raw.startswith(name):
+            arg = self._match_name(raw, name, allow_glued=True)
+            if arg is None:
                 continue
-            rest = raw[len(name):]
-            if not rest:
-                code = ""
-            elif rest[0] in SEPARATORS:
-                code = rest[1:].strip()
-            elif rest[0].isdigit() or (rest[0].isascii() and rest[0].isalpha()):
-                # 紧贴写法：/绑定12345678。只认 ASCII 字母数字，
-                # 否则「绑定是什么意思」会被当成绑定码 "是什么意思"。
-                code = rest.strip()
-            else:
-                return None
             # 群聊里只发「绑定」两个字不插话，避免日常聊天被误触发。
-            if code == "" and event is not None and not self._is_private(event):
+            if arg == "" and event is not None and not self._is_private(event):
                 return None
-            return code
+            return ("bind", arg)
+
+        # 长名优先，避免「榜单」被「榜」提前截断
+        for name in sorted(SELF_COMMANDS, key=len, reverse=True):
+            arg = self._match_name(raw, name, allow_glued=False)
+            if arg is None:
+                continue
+            if arg.strip():
+                # 「余额怎么办」这类不算命令，当作聊天放过
+                return None
+            if event is not None and not self._is_private(event) and not prefixed:
+                return None
+            return (SELF_COMMANDS[name], "")
+
         return None
+
+    def _parse_command(self, text: str, event=None):
+        """兼容旧接口：只返回绑定参数，非绑定命令一律 None。"""
+        parsed = self._parse_any(text, event)
+        if parsed is None or parsed[0] != "bind":
+            return None
+        return parsed[1]
 
     async def _handle_bind(self, event: AstrMessageEvent, code: str = ""):
         """外层兜底。
@@ -397,6 +476,144 @@ class NewApiQQBindPlugin(Star):
         self._mark_attempt(qq, False)
         yield event.plain_result(self._error_text(status, body))
 
+    # ------------------------------------------------------- self-service 命令
+
+    def _self_cooldown_remaining(self, qq: str) -> int:
+        last = self._last_self.get(qq)
+        if last is None:
+            return 0
+        wait = last + self._window("self_cooldown_seconds", SELF_COOLDOWN_DEFAULT) - time.time()
+        return int(wait) + 1 if wait > 0 else 0
+
+    @staticmethod
+    def _fmt_quota(value) -> str:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return "0"
+        return f"{number:,}"
+
+    @staticmethod
+    def _fmt_usd(value) -> str:
+        try:
+            return f"${float(value):.4f}"
+        except (TypeError, ValueError):
+            return "$0.0000"
+
+    async def _handle_self(self, event: AstrMessageEvent, command: str):
+        """自助查询的外层兜底：任何异常都不许冒泡到 AstrBot。"""
+        try:
+            async for result in self._handle_self_inner(event, command):
+                yield result
+        except Exception as exc:  # pragma: no cover - 防御性
+            logger.error(f"[{PLUGIN_NAME}] self handler crashed: {exc!r}")
+            try:
+                yield event.plain_result("查询出错了，请稍后再试一次。")
+            except Exception:
+                pass
+
+    async def _handle_self_inner(self, event: AstrMessageEvent, command: str):
+        # 防御：handler 只该由 command_router 调，但万一别处直接调进来，
+        # 也要保证群聊里的裸「余额」不会触发（这里重新过一遍解析即可）。
+        if self._parse_any(getattr(event, "message_str", "") or "", event) is None:
+            return
+        qq = self._sender_qq(event)
+        if not qq:
+            yield event.plain_result("拿不到你的 QQ 号，请私聊机器人使用本命令。")
+            return
+        if not self._cfg("agent_token"):
+            yield event.plain_result(
+                "机器人还没配置服务令牌，请联系站点管理员（qq_agent_token）。"
+            )
+            return
+
+        remaining = self._self_cooldown_remaining(qq)
+        if remaining > 0:
+            yield event.plain_result(f"查得太勤了，{remaining} 秒后再试。")
+            return
+        self._last_self[qq] = time.time()
+
+        if command == "rank":
+            status, body = await self._call("GET", "/api/qq/agent/rank?limit=10")
+            if status != 200 or not body.get("success"):
+                yield event.plain_result(self._error_text(status, body))
+                return
+            data = body.get("data") or {}
+            items = data.get("items") or []
+            if not items:
+                yield event.plain_result("今天还没有人用模型，榜是空的。")
+                return
+            lines = [f"今日用量榜（{data.get('date', '')}）"]
+            for item in items:
+                lines.append(
+                    f"{item.get('rank')}. {item.get('username')}　"
+                    f"{self._fmt_quota(item.get('quota'))}"
+                )
+            yield event.plain_result("\n".join(lines))
+            return
+
+        if command == "checkin":
+            status, body = await self._call(
+                "POST", "/api/qq/agent/checkin", {"qq": qq}
+            )
+            if status != 200 or not body.get("success"):
+                yield event.plain_result(self._error_text(status, body))
+                return
+            data = body.get("data") or {}
+            if data.get("bound") is False:
+                yield event.plain_result(
+                    "这个 QQ 还没绑定账号。先到面板生成绑定码，再发「绑定 <码>」。"
+                )
+                return
+            if data.get("already"):
+                yield event.plain_result("今天已经签过了，明天再来。")
+                return
+            yield event.plain_result(
+                f"签到成功 ✅ 获得 {self._fmt_quota(data.get('quota_awarded'))} 额度"
+                f"（约 {self._fmt_usd(data.get('quota_usd'))}）\n"
+                f"当前余额：{self._fmt_usd(data.get('quota_usd'))}"
+                f"（{self._fmt_quota(data.get('quota'))} 额度）"
+            )
+            return
+
+        # command == "me"
+        status, body = await self._call("GET", f"/api/qq/agent/me?qq={qq}")
+        if status != 200 or not body.get("success"):
+            yield event.plain_result(self._error_text(status, body))
+            return
+        data = body.get("data") or {}
+        if data.get("bound") is False:
+            yield event.plain_result(
+                "这个 QQ 还没绑定账号。先到面板生成绑定码，再发「绑定 <码>」。"
+            )
+            return
+
+        limit = data.get("daily_limit") or 0
+        used = data.get("used_today") or 0
+        if limit:
+            state = "已达上限，明天 0 点重置" if used >= limit else f"还剩 {self._fmt_quota(limit - used)}"
+            usage_line = f"今日用量：{self._fmt_quota(used)} / {self._fmt_quota(limit)}（{state}）"
+        else:
+            usage_line = f"今日用量：{self._fmt_quota(used)} 额度（未设上限）"
+
+        if not data.get("checkin_enabled"):
+            checkin_line = "今日签到：站点未开启"
+        elif data.get("checked_in_today"):
+            checkin_line = "今日签到：已签到"
+        else:
+            checkin_line = (
+                f"今日签到：未签到（可得 {self._fmt_quota(data.get('checkin_min'))}"
+                f"~{self._fmt_quota(data.get('checkin_max'))}，发「签到」领取）"
+            )
+
+        yield event.plain_result(
+            f"站点账号：{data.get('username')}\n"
+            f"余额：{self._fmt_usd(data.get('quota_usd'))}"
+            f"（{self._fmt_quota(data.get('quota'))} 额度）\n"
+            f"{usage_line}\n"
+            f"{checkin_line}"
+        )
+
     def _diagnostic_text(self, event: AstrMessageEvent, qq: str, status: int, body: dict) -> str:
         """一条消息里给出排查「命令没反应」所需的全部事实。"""
         token = self._cfg("agent_token")
@@ -435,7 +652,7 @@ class NewApiQQBindPlugin(Star):
             return ERROR_HINTS["QQ_AGENT_UNAVAILABLE"]
         if status == 401:
             return ERROR_HINTS["QQ_AGENT_UNAUTHORIZED"]
-        return f"绑定失败（HTTP {status}）{('：' + message) if message else ''}"
+        return f"操作失败（HTTP {status}）{('：' + message) if message else ''}"
 
 
 def _safe_json(raw: str) -> dict:

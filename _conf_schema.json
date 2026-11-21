@@ -34,5 +34,11 @@
     "description": "绑定失败后的冷却秒数",
     "default": 3,
     "hint": "打错一位能立刻重试；填 0 表示失败不冷却（不建议，连点会变成对站点的轮询）"
+  },
+  "self_cooldown_seconds": {
+    "type": "int",
+    "description": "自助查询（余额/签到/排行）的冷却秒数",
+    "default": 3,
+    "hint": "只防连点刷屏；同一个 QQ 在这个间隔内重复发自助命令会被提示稍后再试"
   }
 }

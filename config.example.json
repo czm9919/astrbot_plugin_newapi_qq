@@ -4,5 +4,6 @@
   "bind_command": "绑定",
   "timeout_seconds": 10,
   "cooldown_seconds": 30,
-  "retry_cooldown_seconds": 3
+  "retry_cooldown_seconds": 3,
+  "self_cooldown_seconds": 3
 }
